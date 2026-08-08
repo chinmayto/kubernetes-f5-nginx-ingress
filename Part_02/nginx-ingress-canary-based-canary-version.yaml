@@ -1,0 +1,27 @@
+# F5 NGINX Ingress Controller uses the VirtualServer CRD for traffic splitting.
+# This replaces the ingress-nginx canary annotation pattern.
+# stable version (service-nodejs-app-1) receives 80% and canary (service-nodejs-app-2) receives 20%.
+apiVersion: k8s.nginx.org/v1
+kind: VirtualServer
+metadata:
+  name: simple-nodejs-vs
+  namespace: simple-nodejs-app
+spec:
+  ingressClassName: nginx
+  host: chinmayto.com
+  upstreams:
+    - name: stable
+      service: service-nodejs-app-1
+      port: 80
+    - name: canary
+      service: service-nodejs-app-2
+      port: 80
+  routes:
+    - path: /
+      splits:
+        - weight: 80
+          action:
+            pass: stable
+        - weight: 20
+          action:
+            pass: canary
