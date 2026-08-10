@@ -1,7 +1,5 @@
 # Kubernetes Ingress Playlist – Part 1: Installing F5 NGINX Ingress Controller on AWS EKS using Helm
 
-In the earlier part of our Kubernetes Ingress Playlist, we understood what Kubernetes Ingress is and why it's important in simplifying external access to services within your cluster.
-
 In this part, we'll take a hands-on approach to install the **F5 NGINX Ingress Controller** on an Amazon EKS cluster using Helm, and expose it to the internet using an AWS Network Load Balancer (NLB).
 
 ### Why F5 NGINX Ingress Controller?
@@ -22,14 +20,52 @@ This may work for basic use cases, but for production workloads it's recommended
 To create a Network Load Balancer, use the AWS-specific annotation via Helm:
 
 ```bash
-helm repo add nginx-stable https://helm.nginx.com/stable
-helm repo update
+#!/usr/bin/env bash
+# Install the F5 NGINX Ingress Controller on AWS EKS using Helm.
+# Values mirror the Terraform helm_release.nginx_ingress configuration in
+# infrastructure/nginx-ingress.tf so both methods produce identical deployments.
+#
+# Chart  : nginx-stable/nginx-ingress  2.6.4
+# App    : F5 NGINX Ingress Controller v5.5.4 (open-source)
+# Repo   : https://helm.nginx.com/stable
 
-helm upgrade -i nginx-ingress nginx-stable/nginx-ingress \
-  --namespace nginx-ingress --create-namespace \
+set -euo pipefail
+
+helm repo add nginx-stable https://helm.nginx.com/stable
+helm repo update nginx-stable
+
+helm upgrade --install nginx-ingress nginx-stable/nginx-ingress \
+  --namespace nginx-ingress \
+  --create-namespace \
+  --version 2.6.4 \
+  --wait \
+  --timeout 10m \
+  --atomic \
   --set controller.service.type=LoadBalancer \
-  --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb"
+  --set controller.service.externalTrafficPolicy=Cluster \
+  --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
+  --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-cross-zone-load-balancing-enabled"="true" \
+  --set controller.ingressClass.name=nginx \
+  --set controller.ingressClass.create=true \
+  --set controller.ingressClass.setAsDefaultIngress=false \
+  --set controller.replicaCount=2 \
+  --set prometheus.create=true \
+  --set prometheus.port=9113 \
+  --set prometheus.scheme=http
+
+echo ""
+echo "F5 NGINX Ingress Controller installed. NLB hostname:"
+kubectl get svc nginx-ingress-controller -n nginx-ingress \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+echo ""
 ```
+
+Key flags explained:
+- `--version 2.6.4` — pins to F5 NGINX IC v5.5.4; avoids unexpected upgrades
+- `--wait --atomic --timeout 10m` — blocks until all pods are Ready; rolls back automatically on failure
+- `externalTrafficPolicy=Cluster` — required with cross-zone NLB to prevent asymmetric routing packet drops
+- `replicaCount=2` — two replicas avoids a single point of failure during rolling updates
+- `prometheus.create=true` — exposes metrics on port 9113 for Prometheus scraping (top-level key in chart 2.x, not `controller.metrics`)
 
 Output will look like:
 ```bash

@@ -18,6 +18,64 @@ Cert-Manager is a native Kubernetes certificate management controller that autom
 
 With Cert-Manager, you don't need to manually generate and rotate certificates. It integrates seamlessly with Kubernetes and works great with Ingress resources.
 
+### Step 0: Deploy the Node.js App
+
+```bash
+kubectl apply -f deploy-simple-nodejs-app.yaml
+```
+
+The manifest creates a Namespace, Deployment (2 replicas), and ClusterIP Service:
+```yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: simple-nodejs-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: simple-nodejs-app
+  name: deployment-nodejs-app
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nodejs-app
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nodejs-app
+    spec:
+      containers:
+      - image: public.ecr.aws/n4o6g6h8/simple-nodejs-app:latest
+        imagePullPolicy: Always
+        name: nodejs-app
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: simple-nodejs-app
+  name: service-nodejs-app
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      name: http
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: nodejs-app
+```
+
 ###  Step 1: Install Cert-Manager using Helm
 
 We will use Helm to install Cert-Manager. The following commands install the controller and its required CustomResourceDefinitions (CRDs).
@@ -67,6 +125,10 @@ kind: ClusterIssuer
 metadata:
   name: letsencrypt-nginx-cert
 spec:
+  # ACME issuer configuration
+  # `email` - the email address to be associated with the ACME account (make sure it's a valid one)
+  # `server` - the URL used to access the ACME server's directory endpoint
+  # `privateKeySecretRef` - Kubernetes Secret to store the automatically generated ACME account private key
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
     email: newabog237@misehub.com

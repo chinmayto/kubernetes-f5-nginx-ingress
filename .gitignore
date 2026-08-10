@@ -42,3 +42,26 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+####################################################################################
+# F5 NGINX Ingress Controller — Helm chart cache and lock
+####################################################################################
+
+# Helm chart dependencies and local cache pulled by helm_release
+infrastructure/charts/
+infrastructure/*.tgz
+
+# Terraform provider lock file — commit this to pin provider versions across the team
+# !infrastructure/.terraform.lock.hcl
+
+# Generated nginx-ingress Helm values dump (created during debugging/investigation)
+infrastructure/nginx-ingress-values-*.txt
+
+# TLS key/cert files generated locally (Part_04 and Part_05 self-signed cert steps)
+*.key
+*.crt
+tls.key
+tls.crt
+
+# htpasswd auth file generated locally (Part_03 basic auth step)
+auth

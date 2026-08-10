@@ -6,6 +6,64 @@ While in production environments you should always use trusted Certificate Autho
 
 We will secure our `simple-nodejs-app` which is already exposed via Ingress and add a TLS layer on top using a self-signed certificate. I have already deployed the pod with service and added an A record in Route 53 for the NLB DNS name.
 
+### Step 0: Deploy the Node.js App
+
+```bash
+kubectl apply -f deploy-simple-nodejs-app.yaml
+```
+
+The manifest creates a Namespace, Deployment (2 replicas), and ClusterIP Service:
+```yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: simple-nodejs-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: simple-nodejs-app
+  name: deployment-nodejs-app
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nodejs-app
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nodejs-app
+    spec:
+      containers:
+      - image: public.ecr.aws/n4o6g6h8/simple-nodejs-app:latest
+        imagePullPolicy: Always
+        name: nodejs-app
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: simple-nodejs-app
+  name: service-nodejs-app
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      name: http
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: nodejs-app
+```
+
 ### Step 1. Generate Self-Signed TLS Certificate
 
 Use the following command to generate a cert and private key:

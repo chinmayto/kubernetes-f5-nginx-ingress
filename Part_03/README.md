@@ -4,6 +4,64 @@ In the previous parts of this playlist, we explored what Ingress is, installed t
 
 We'll use the same `simple-nodejs-app` deployed on EKS as the backend service.
 
+### Step 0: Deploy the Node.js App
+
+```bash
+kubectl apply -f deploy-simple-nodejs-app.yaml
+```
+
+The manifest creates a Namespace, Deployment (2 replicas), and ClusterIP Service:
+```yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: simple-nodejs-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: simple-nodejs-app
+  name: deployment-nodejs-app
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nodejs-app
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nodejs-app
+    spec:
+      containers:
+      - image: public.ecr.aws/n4o6g6h8/simple-nodejs-app:latest
+        imagePullPolicy: Always
+        name: nodejs-app
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: simple-nodejs-app
+  name: service-nodejs-app
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      name: http
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: nodejs-app
+```
+
 ### What is Basic Authentication?
 Basic Authentication is a simple authentication mechanism where a client provides a username and password with each HTTP request. While not the most secure form of authentication (especially without HTTPS), it's quick and useful for internal applications or early-stage deployments.
 

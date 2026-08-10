@@ -14,26 +14,132 @@ First, deploy both applications in separate deployments with a service:
 
 Deploy first app:
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/chinmayto/kubernetes-f5-nginx-ingress/main/Part_03/deploy-simple-nodejs-app-1.yaml
+kubectl apply -f https://raw.githubusercontent.com/chinmayto/kubernetes-f5-nginx-ingress/main/Part_02/deploy-simple-nodejs-app-1.yaml
 ```
 
 Deploy second app:
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/chinmayto/kubernetes-f5-nginx-ingress/main/Part_03/deploy-simple-nodejs-app-2.yaml
+kubectl apply -f https://raw.githubusercontent.com/chinmayto/kubernetes-f5-nginx-ingress/main/Part_02/deploy-simple-nodejs-app-2.yaml
+```
+
+### Deploy the apps
+
+deploy-simple-nodejs-app-1.yaml:
+```yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: simple-nodejs-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: simple-nodejs-app
+  name: deployment-nodejs-app-1
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nodejs-app-1
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nodejs-app-1
+    spec:
+      containers:
+      - image: public.ecr.aws/n4o6g6h8/simple-nodejs-app-1:latest
+        imagePullPolicy: Always
+        name: nodejs-app-1
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: simple-nodejs-app
+  name: service-nodejs-app-1
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      name: http
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: nodejs-app-1
+```
+
+deploy-simple-nodejs-app-2.yaml:
+```yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: simple-nodejs-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: simple-nodejs-app
+  name: deployment-nodejs-app-2
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nodejs-app-2
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nodejs-app-2
+    spec:
+      containers:
+      - image: public.ecr.aws/n4o6g6h8/simple-nodejs-app-2:latest
+        imagePullPolicy: Always
+        name: nodejs-app-2
+        ports:
+        - containerPort: 8081
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: simple-nodejs-app
+  name: service-nodejs-app-2
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      name: http
+      targetPort: 8081
+  selector:
+    app.kubernetes.io/name: nodejs-app-2
 ```
 
 Verify both apps are running. The first app exposes services to targetPort 8080 and the second at targetPort 8081.
 ```bash
 $ kubectl get svc,pod -n simple-nodejs-app
 NAME                           TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)   AGE
-service/service-nodejs-app-1   ClusterIP   172.20.232.156   <none>        80/TCP    37s
-service/service-nodejs-app-2   ClusterIP   172.20.80.39     <none>        80/TCP    26s
+service/service-nodejs-app-1   ClusterIP   172.20.170.128   <none>        80/TCP    21s
+service/service-nodejs-app-2   ClusterIP   172.20.240.211   <none>        80/TCP    12s
 
-NAME                                           READY   STATUS    RESTARTS   AGE        
-pod/deployment-nodejs-app-1-5cc7b94fd8-9dcsx   1/1     Running   0          38s        
-pod/deployment-nodejs-app-1-5cc7b94fd8-zs477   1/1     Running   0          38s
-pod/deployment-nodejs-app-2-7fc47d7995-9klmv   1/1     Running   0          26s
-pod/deployment-nodejs-app-2-7fc47d7995-fc94w   1/1     Running   0          26s
+NAME                                           READY   STATUS    RESTARTS   AGE
+pod/deployment-nodejs-app-1-5cc7b94fd8-95mmk   1/1     Running   0          23s
+pod/deployment-nodejs-app-1-5cc7b94fd8-qlfl6   1/1     Running   0          23s
+pod/deployment-nodejs-app-2-7fc47d7995-8q8xd   1/1     Running   0          14s
+pod/deployment-nodejs-app-2-7fc47d7995-wc5fh   0/1     Running   0          14s
 ```
 
 The F5 NGINX Ingress Controller acts as a smart reverse proxy at the edge of the cluster, inspecting incoming requests and forwarding them based on predefined rules — by path, host, headers, or custom conditions. It consolidates access to multiple applications through a single IP address or load balancer and supports advanced traffic management strategies like TLS termination, traffic splitting, and authentication.
@@ -279,6 +385,9 @@ Canary routing enables progressive delivery by splitting a portion of traffic to
 
 Create manifest (nginx-ingress-canary-based-canary-version.yaml) — this single `VirtualServer` resource replaces both the stable and canary Ingress objects:
 ```yaml
+# F5 NGINX Ingress Controller uses the VirtualServer CRD for traffic splitting.
+# This replaces the ingress-nginx canary annotation pattern.
+# stable version (service-nodejs-app-1) receives 80% and canary (service-nodejs-app-2) receives 20%.
 apiVersion: k8s.nginx.org/v1
 kind: VirtualServer
 metadata:

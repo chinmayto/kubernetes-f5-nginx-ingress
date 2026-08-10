@@ -1,6 +1,0 @@
-# F5 NGINX Ingress Controller uses the VirtualServer CRD for traffic splitting (canary).
-# The stable/canary split is defined in a single VirtualServer resource.
-# See nginx-ingress-canary-based-canary-version.yaml for the combined VirtualServer definition.
-#
-# Stable backend service (80% of traffic):
-#   service: service-nodejs-app-1  port: 80  weight: 80
