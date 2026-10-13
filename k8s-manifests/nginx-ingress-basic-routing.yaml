@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: simple-nodejs-ingress
-  namespace: app1
+  namespace: simple-nodejs-app
   annotations:
     nginx.org/rewrites: "serviceName=service-nodejs-app-1 rewrite=/"
 spec:

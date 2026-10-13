@@ -1,6 +1,6 @@
 # Routing Traffic on EKS with the F5 NGINX Ingress Controller
 
-If you have run anything on Kubernetes, you have almost certainly used `ingress-nginx` - the community controller that fronts inbound traffic for roughly half of all clusters. That era is ending. In this post we will look at *why* you need to move, and then build a complete, working setup on AWS EKS using the **F5 NGINX Ingress Controller** instead: an EKS cluster provisioned with Terraform, a Network Load Balancer wired up through the AWS Load Balancer Controller, and three flavors of routing (basic, path-based, and host-based) demonstrated across two namespaces.
+If you have run anything on Kubernetes, you have almost certainly used `ingress-nginx` - the community controller that fronts inbound traffic for roughly half of all clusters. That era is ending. In this post we will look at *why* you need to move, and then build a complete, working setup on AWS EKS using the **F5 NGINX Ingress Controller** instead: an EKS cluster provisioned with Terraform, a Network Load Balancer wired up through the AWS Load Balancer Controller, and three flavors of routing (basic, path-based, and host-based) using two sample apps.
 
 ## The elephant in the room: ingress-nginx is retired
 
@@ -25,7 +25,7 @@ This post takes direction #2.
 
 ## Architecture
 
-Here is what we are building. A single Network Load Balancer sits at the edge; the F5 NGINX Ingress Controller runs behind it as a reverse proxy and routes requests to two sample Node.js apps that live in **separate namespaces** (`app1` and `app2`).
+Here is what we are building. A single Network Load Balancer sits at the edge; the F5 NGINX Ingress Controller runs behind it as a reverse proxy and routes requests to two sample Node.js apps that live in a shared namespace (`simple-nodejs-app`).
 
 ```
                           Internet
@@ -47,12 +47,13 @@ Here is what we are building. A single Network Load Balancer sits at the edge; t
                    │                      │
         host/path routing rules   host/path routing rules
                    ▼                      ▼
-        ┌─────────────────┐      ┌─────────────────┐
-        │   namespace     │      │   namespace     │
-        │      app1       │      │      app2       │
-        │ svc + 2 pods    │      │ svc + 2 pods    │
-        │ nodejs-app-1    │      │ nodejs-app-2    │
-        └─────────────────┘      └─────────────────┘
+        ┌──────────────────────────────────────────┐
+        │          namespace: simple-nodejs-app     │
+        │  ┌─────────────────┐  ┌─────────────────┐ │
+        │  │  svc + 2 pods   │  │  svc + 2 pods   │ │
+        │  │  nodejs-app-1   │  │  nodejs-app-2   │ │
+        │  └─────────────────┘  └─────────────────┘ │
+        └──────────────────────────────────────────┘
 ```
 
 Component breakdown:
@@ -64,25 +65,25 @@ Component breakdown:
   - `service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip`
   - `service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing`
 - **Route 53** - one alias `A` record per hostname (`app.`, `app1.`, `app2.chinmayto.com`), all pointing at the NLB.
-- **Two Node.js apps** - `nodejs-app-1` in namespace `app1` and `nodejs-app-2` in namespace `app2`, each a Deployment (2 replicas) fronted by a `ClusterIP` Service.
+- **Two Node.js apps** - `nodejs-app-1` and `nodejs-app-2`, both in the `simple-nodejs-app` namespace, each a Deployment (2 replicas) fronted by a `ClusterIP` Service.
 
 ## Deploy the two apps
 
-Each app gets its **own namespace**. `app1` listens on container port 8080, `app2` on 8081; both are exposed internally via a `ClusterIP` Service on port 80.
+Both apps share the `simple-nodejs-app` namespace. `nodejs-app-1` listens on container port 8080, `nodejs-app-2` on 8081; both are exposed internally via a `ClusterIP` Service on port 80.
 
-`deploy-simple-nodejs-app-1.yaml` (namespace `app1`):
+`deploy-simple-nodejs-app-1.yaml`:
 
 ```yaml
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: app1
+  name: simple-nodejs-app
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: app1
+  namespace: simple-nodejs-app
   name: deployment-nodejs-app-1
 spec:
   selector:
@@ -111,7 +112,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: app1
+  namespace: simple-nodejs-app
   name: service-nodejs-app-1
 spec:
   type: ClusterIP
@@ -123,7 +124,7 @@ spec:
     app.kubernetes.io/name: nodejs-app-1
 ```
 
-`deploy-simple-nodejs-app-2.yaml` is the mirror image in namespace `app2` (service `service-nodejs-app-2`, container port 8081).
+`deploy-simple-nodejs-app-2.yaml` is the mirror image in the same `simple-nodejs-app` namespace (service `service-nodejs-app-2`, container port 8081).
 
 Apply both:
 
@@ -131,19 +132,18 @@ Apply both:
 kubectl apply -f k8s-manifests/deploy-simple-nodejs-app-1.yaml
 kubectl apply -f k8s-manifests/deploy-simple-nodejs-app-2.yaml
 
-kubectl get svc,pod -n app1
-kubectl get svc,pod -n app2
+kubectl get svc,pod -n simple-nodejs-app
 ```
 
 ## A note that shapes everything: Ingress is namespaced
 
-A key Kubernetes rule drives the manifest design below: **an `Ingress` can only reference Services in its own namespace.** Because `app1` and `app2` live in separate namespaces, you cannot point one Ingress at both. The F5 NGINX Ingress Controller handles this cleanly - it **merges Ingresses that share the same host**, so you define one Ingress per namespace and the controller stitches them together at the edge.
+A key Kubernetes rule drives the manifest design below: **an `Ingress` can only reference Services in its own namespace.** This is why both apps share a single namespace, `simple-nodejs-app`: it lets one Ingress reference both Services and own all the rules for a given host. (Trying to serve the *same host* from two Ingresses in *different* namespaces causes a host collision - the controller accepts one and ignores the other - which is exactly the trap this layout avoids.)
 
 Also note the F5-specific annotation `nginx.org/rewrites` - it rewrites the request URI before forwarding to the backend. It is the F5 equivalent of the retired controller's `nginx.ingress.kubernetes.io/rewrite-target`.
 
 ### 1) Basic routing
 
-The simplest case: send everything on a host to one backend. Here all traffic to `app.chinmayto.com` goes to `service-nodejs-app-1` in `app1`.
+The simplest case: send everything on a host to one backend. Here all traffic to `app.chinmayto.com` goes to `service-nodejs-app-1`.
 
 `nginx-ingress-basic-routing.yaml`:
 
@@ -152,7 +152,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: simple-nodejs-ingress
-  namespace: app1
+  namespace: simple-nodejs-app
   annotations:
     nginx.org/rewrites: "serviceName=service-nodejs-app-1 rewrite=/"
 spec:
@@ -172,55 +172,48 @@ spec:
 
 ```bash
 kubectl apply -f k8s-manifests/nginx-ingress-basic-routing.yaml
-kubectl get ingress -n app1
+kubectl get ingress -n simple-nodejs-app
 ```
 
 Access it at `http://app.chinmayto.com/`.
 
-### 2) Path-based routing (across two namespaces)
+![Basic routing - all traffic on app.chinmayto.com served by app 1](./images/basic-routing.png)
 
-Route by URL path: `/app1` to one app, `/app2` to the other - both under the same host `app.chinmayto.com`. Because the backends are in different namespaces, this is **two Ingresses sharing a host**, which the controller merges.
+### 2) Path-based routing (single Ingress, single namespace)
+
+Route by URL path: `/app1` to one app, `/app2` to the other - both under the same host `app.chinmayto.com`. Because both Services live in one namespace, this is a **single Ingress with two paths**.
+
+There is a catch: the sample apps only serve `/`, so the matched prefix (`/app1`, `/app2`) has to be **stripped** before the request reaches the backend - otherwise the app replies `Cannot GET /app1`. With the F5 NGINX Ingress Controller you strip a prefix using two annotations together:
+
+- `nginx.org/path-regex: "case_sensitive"` - treat the `path` field as a regular expression.
+- `nginx.org/rewrite-target: "/$1"` - rewrite the matched URI to `/`, where `$1` is the regex capture group that preserves anything after the prefix.
 
 `nginx-ingress-path-based-routing.yaml`:
 
 ```yaml
----
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: simple-nodejs-ingress-app1
-  namespace: app1
+  name: simple-nodejs-ingress
+  namespace: simple-nodejs-app
   annotations:
-    nginx.org/rewrites: "serviceName=service-nodejs-app-1 rewrite=/"
+    nginx.org/path-regex: "case_sensitive"
+    nginx.org/rewrite-target: "/$1"
 spec:
   ingressClassName: nginx
   rules:
     - host: app.chinmayto.com
       http:
         paths:
-          - path: /app1
-            pathType: Prefix
+          - path: /app1(?:/(.*))?
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: service-nodejs-app-1
                 port:
                   number: 80
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: simple-nodejs-ingress-app2
-  namespace: app2
-  annotations:
-    nginx.org/rewrites: "serviceName=service-nodejs-app-2 rewrite=/"
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: app.chinmayto.com
-      http:
-        paths:
-          - path: /app2
-            pathType: Prefix
+          - path: /app2(?:/(.*))?
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: service-nodejs-app-2
@@ -230,27 +223,29 @@ spec:
 
 ```bash
 kubectl apply -f k8s-manifests/nginx-ingress-path-based-routing.yaml
-kubectl get ingress -n app1
-kubectl get ingress -n app2
+kubectl get ingress -n simple-nodejs-app
 ```
 
 Access `http://app.chinmayto.com/app1` and `http://app.chinmayto.com/app2`.
 
-### 3) Host-based routing (across two namespaces)
+![Path-based routing - app.chinmayto.com/app1 served by app 1](./images/path-based-routing-app1.png)
 
-Route by the HTTP `Host` header: `app1.chinmayto.com` to one app, `app2.chinmayto.com` to the other. Each host maps to a service in a different namespace, so again it is one Ingress per namespace, each matching its own host.
+![Path-based routing - app.chinmayto.com/app2 served by app 2](./images/path-based-routing-app2.png)
+
+### 3) Host-based routing (single Ingress, single namespace)
+
+Route by the HTTP `Host` header: `app1.chinmayto.com` to one app, `app2.chinmayto.com` to the other. Since the hosts differ and both Services are in the same namespace, this is a single Ingress with two host rules.
+
+Each host routes `/` straight to its backend, so **no rewrite annotation is needed** - the request path passes through unchanged. (Adding `nginx.org/rewrites` here is unnecessary and, with two services listed, can misroute and produce a 404.)
 
 `nginx-ingress-host-based-routing.yaml`:
 
 ```yaml
----
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: simple-nodejs-ingress-app1
-  namespace: app1
-  annotations:
-    nginx.org/rewrites: "serviceName=service-nodejs-app-1 rewrite=/"
+  name: simple-nodejs-ingress
+  namespace: simple-nodejs-app
 spec:
   ingressClassName: nginx
   rules:
@@ -264,17 +259,6 @@ spec:
                 name: service-nodejs-app-1
                 port:
                   number: 80
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: simple-nodejs-ingress-app2
-  namespace: app2
-  annotations:
-    nginx.org/rewrites: "serviceName=service-nodejs-app-2 rewrite=/"
-spec:
-  ingressClassName: nginx
-  rules:
     - host: app2.chinmayto.com
       http:
         paths:
@@ -289,11 +273,14 @@ spec:
 
 ```bash
 kubectl apply -f k8s-manifests/nginx-ingress-host-based-routing.yaml
-kubectl get ingress -n app1
-kubectl get ingress -n app2
+kubectl get ingress -n simple-nodejs-app
 ```
 
 Access `http://app1.chinmayto.com` and `http://app2.chinmayto.com`.
+
+![Host-based routing - app1.chinmayto.com served by app 1](./images/host-based-routing-app1.png)
+
+![Host-based routing - app2.chinmayto.com served by app 2](./images/host-based-routing-app2.png)
 
 ## Testing without DNS
 
@@ -330,7 +317,7 @@ terraform destroy
 
 ## Conclusion
 
-`ingress-nginx` served the community well, but with its retirement it is time to move. The F5 NGINX Ingress Controller is a drop-in-spirited, actively maintained alternative: you keep the familiar Kubernetes `Ingress` resource, swap the annotation prefix to `nginx.org/`, and gain a richer CRD-based API when you need it. In this post we built the whole path end to end on EKS - an IP-target NLB via the AWS Load Balancer Controller, the F5 controller as the edge proxy, and basic, path-based, and host-based routing demonstrated across two namespaces (leaning on the controller's host-merging behavior to work around the "Ingress is namespaced" rule). From here, the natural next steps are TLS termination, authentication, and traffic splitting with the `VirtualServer` CRD.
+`ingress-nginx` served the community well, but with its retirement it is time to move. The F5 NGINX Ingress Controller is a drop-in-spirited, actively maintained alternative: you keep the familiar Kubernetes `Ingress` resource, swap the annotation prefix to `nginx.org/`, and gain a richer CRD-based API when you need it. In this post we built the whole path end to end on EKS - an IP-target NLB via the AWS Load Balancer Controller, the F5 controller as the edge proxy, and basic, path-based, and host-based routing driven by plain `Ingress` resources in a single namespace. A key lesson along the way: because an `Ingress` can only reference Services in its own namespace, same-host routing is cleanest when the backends share a namespace - which is why both apps live in `simple-nodejs-app`. From here, the natural next steps are TLS termination, authentication, and traffic splitting with the `VirtualServer` CRD (which is also F5's answer to true cross-namespace routing).
 
 ## References
 

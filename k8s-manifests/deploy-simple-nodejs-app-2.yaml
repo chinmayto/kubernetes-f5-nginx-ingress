@@ -2,12 +2,12 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: app2
+  name: simple-nodejs-app
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: app2
+  namespace: simple-nodejs-app
   name: deployment-nodejs-app-2
 spec:
   selector:
@@ -36,7 +36,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: app2
+  namespace: simple-nodejs-app
   name: service-nodejs-app-2
 spec:
   type: ClusterIP

@@ -1,47 +1,38 @@
-# Path-based routing across TWO namespaces.
+# Path-based routing in a single namespace, with prefix stripping.
 #
-# A Kubernetes Ingress can only reference Services in its OWN namespace, so when
-# app1 and app2 live in different namespaces you need one Ingress per namespace.
-# The F5 NGINX Ingress Controller merges Ingresses that share the same host, so
-# "app.chinmayto.com/app1" and "app.chinmayto.com/app2" still resolve correctly
-# even though they are defined in separate resources/namespaces.
----
+# Both apps live in the "simple-nodejs-app" namespace, so one Ingress can
+# reference both Services and own all paths for the shared host.
+#
+# The backend apps only serve "/", so the matched prefix (/app1, /app2) must be
+# stripped before the request reaches them. With the F5 NGINX Ingress Controller
+# this is done with:
+#   nginx.org/path-regex   -> treat the path field as a regular expression
+#   nginx.org/rewrite-target -> rewrite the matched URI to "/" (the $1 capture
+#                               group preserves anything after the prefix)
+# Without this, the app receives "/app1" and responds "Cannot GET /app1".
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: simple-nodejs-ingress-app1
-  namespace: app1
+  name: simple-nodejs-ingress
+  namespace: simple-nodejs-app
   annotations:
-    nginx.org/rewrites: "serviceName=service-nodejs-app-1 rewrite=/"
+    nginx.org/path-regex: "case_sensitive"
+    nginx.org/rewrite-target: "/$1"
 spec:
   ingressClassName: nginx
   rules:
     - host: app.chinmayto.com
       http:
         paths:
-          - path: /app1
-            pathType: Prefix
+          - path: /app1(?:/(.*))?
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: service-nodejs-app-1
                 port:
                   number: 80
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: simple-nodejs-ingress-app2
-  namespace: app2
-  annotations:
-    nginx.org/rewrites: "serviceName=service-nodejs-app-2 rewrite=/"
-spec:
-  ingressClassName: nginx
-  rules:
-    - host: app.chinmayto.com
-      http:
-        paths:
-          - path: /app2
-            pathType: Prefix
+          - path: /app2(?:/(.*))?
+            pathType: ImplementationSpecific
             backend:
               service:
                 name: service-nodejs-app-2
