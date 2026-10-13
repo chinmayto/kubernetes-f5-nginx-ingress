@@ -57,7 +57,7 @@ variable "app_hostnames" {
     match the host(s) in the Ingress manifest(s) you deploy. Wildcard aliases
     (e.g. "*.chinmayto.com") are not supported by Route 53 for ELB/NLB targets.
   EOT
-  type = list(string)
+  type        = list(string)
   # Matches the hosts used by the Ingress manifests in k8s-manifests/:
   #   app.chinmayto.com   -> basic routing and path-based routing (/app1, /app2)
   #   app1.chinmayto.com  -> host-based routing (app 1)
