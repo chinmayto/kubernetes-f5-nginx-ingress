@@ -1,0 +1,49 @@
+# Path-based routing across TWO namespaces.
+#
+# A Kubernetes Ingress can only reference Services in its OWN namespace, so when
+# app1 and app2 live in different namespaces you need one Ingress per namespace.
+# The F5 NGINX Ingress Controller merges Ingresses that share the same host, so
+# "app.chinmayto.com/app1" and "app.chinmayto.com/app2" still resolve correctly
+# even though they are defined in separate resources/namespaces.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simple-nodejs-ingress-app1
+  namespace: app1
+  annotations:
+    nginx.org/rewrites: "serviceName=service-nodejs-app-1 rewrite=/"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.chinmayto.com
+      http:
+        paths:
+          - path: /app1
+            pathType: Prefix
+            backend:
+              service:
+                name: service-nodejs-app-1
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simple-nodejs-ingress-app2
+  namespace: app2
+  annotations:
+    nginx.org/rewrites: "serviceName=service-nodejs-app-2 rewrite=/"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.chinmayto.com
+      http:
+        paths:
+          - path: /app2
+            pathType: Prefix
+            backend:
+              service:
+                name: service-nodejs-app-2
+                port:
+                  number: 80

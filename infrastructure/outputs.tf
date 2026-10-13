@@ -52,3 +52,14 @@ output "nodejs_app_dns_info" {
     dns_record_type = "A (Alias to F5 NGINX Ingress NLB)"
   }
 }
+
+output "nodejs_app_dns_records" {
+  description = "Route 53 alias A records created for the Node.js app, keyed by hostname"
+  value = {
+    for host, record in aws_route53_record.nodejs_app :
+    host => {
+      fqdn    = record.fqdn
+      app_url = "http://${host}"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+# Host-based routing across TWO namespaces.
+#
+# Each app lives in its own namespace, and an Ingress can only reference
+# Services in its own namespace, so this uses one Ingress per namespace — each
+# matching its own host. The F5 NGINX Ingress Controller handles the distinct
+# hosts independently:
+#   app1.chinmayto.com -> service-nodejs-app-1 (namespace app1)
+#   app2.chinmayto.com -> service-nodejs-app-2 (namespace app2)
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simple-nodejs-ingress-app1
+  namespace: app1
+  annotations:
+    nginx.org/rewrites: "serviceName=service-nodejs-app-1 rewrite=/"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app1.chinmayto.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: service-nodejs-app-1
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: simple-nodejs-ingress-app2
+  namespace: app2
+  annotations:
+    nginx.org/rewrites: "serviceName=service-nodejs-app-2 rewrite=/"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app2.chinmayto.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: service-nodejs-app-2
+                port:
+                  number: 80

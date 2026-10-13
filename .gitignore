@@ -56,12 +56,3 @@ infrastructure/*.tgz
 
 # Generated nginx-ingress Helm values dump (created during debugging/investigation)
 infrastructure/nginx-ingress-values-*.txt
-
-# TLS key/cert files generated locally (Part_04 and Part_05 self-signed cert steps)
-*.key
-*.crt
-tls.key
-tls.crt
-
-# htpasswd auth file generated locally (Part_03 basic auth step)
-auth
