@@ -112,51 +112,63 @@ resource "helm_release" "nginx_ingress" {
 }
 
 ################################################################################
-# Destroy-time drain of the NGINX LoadBalancer Service.
+# Destroy-time drain of AWS Load Balancer Controller-managed resources.
 #
-# The NGINX controller Service carries the AWS Load Balancer Controller
-# finalizer "service.k8s.aws/resources". On destroy, Terraform uninstalling the
-# NGINX Helm release deletes the Service object, but the finalizer is cleared
-# asynchronously by the LBC as it deprovisions the NLB. If the LBC is torn down
-# first, that finalizer never clears, the Service hangs in Terminating, and the
-# nginx-ingress namespace is stuck forever.
+# Two kinds of objects created for the NGINX LoadBalancer Service carry AWS LBC
+# finalizers that only the LBC can clear:
+#   - the Service  "nginx-ingress-controller"  -> service.k8s.aws/resources
+#   - TargetGroupBinding custom resources       -> elbv2.k8s.aws/resources
 #
-# This resource forces the correct ordering: because helm_release.aws_lb_controller
-# depends on it, Terraform runs this destroy-time provisioner (which deletes the
-# Service and waits for it to fully disappear) BEFORE uninstalling the LBC. The
-# LBC is therefore still alive to process the finalizer and delete the NLB.
+# On destroy, if the LBC is uninstalled before these are gone, their finalizers
+# never clear: the Service hangs in Terminating and the nginx-ingress namespace
+# is stuck forever.
+#
+# Ordering is enforced via depends_on below:
+#   - depends on helm_release.nginx_ingress  -> on destroy this runs AFTER the
+#     NGINX release is uninstalled, so nothing recreates the Service.
+#   - depends on helm_release.aws_lb_controller -> on destroy this runs BEFORE
+#     the LBC is uninstalled, so the LBC is still alive to process the
+#     finalizers and deprovision the real NLB / target groups in AWS.
+#
+# The provisioner deletes the Service and all TargetGroupBindings in the
+# namespace and waits until they are fully gone (finalizers cleared by the LBC).
 ################################################################################
-resource "null_resource" "drain_nginx_service" {
+resource "null_resource" "drain_lbc_resources" {
   triggers = {
     namespace = kubernetes_namespace_v1.nginx_ingress.metadata[0].name
   }
 
-  # Destroy-time only. Deletes the NGINX LoadBalancer Service and blocks until
-  # Kubernetes has fully removed it (finalizer processed by the LBC).
   provisioner "local-exec" {
     when        = destroy
     interpreter = ["PowerShell", "-Command"]
 
     command = <<-EOT
       $ErrorActionPreference = "SilentlyContinue"
+      $ns = "${self.triggers.namespace}"
 
-      Write-Host "Draining NGINX LoadBalancer Service before removing the AWS Load Balancer Controller..."
+      Write-Host "Draining AWS Load Balancer Controller resources in namespace '$ns' before the LBC is removed..."
 
-      # Trigger deletion (ignore if it is already gone).
-      kubectl delete svc nginx-ingress-controller -n nginx-ingress --ignore-not-found --wait=$false | Out-Null
+      # Delete the LoadBalancer Service and any TargetGroupBindings. The LBC
+      # (still running) will deprovision the NLB/target groups and clear the
+      # finalizers. --wait=false so we poll ourselves below.
+      kubectl delete svc nginx-ingress-controller -n $ns --ignore-not-found --wait=$false | Out-Null
+      kubectl delete targetgroupbindings.elbv2.k8s.aws --all -n $ns --ignore-not-found --wait=$false | Out-Null
 
       $maxAttempts = 60   # 60 x 10s = up to 10 minutes
       for ($i = 1; $i -le $maxAttempts; $i++) {
-        kubectl get svc nginx-ingress-controller -n nginx-ingress 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host "NGINX LoadBalancer Service is gone (NLB deprovisioned by the LBC)."
+        $svc = kubectl get svc nginx-ingress-controller -n $ns -o name 2>$null
+        $tgb = kubectl get targetgroupbindings.elbv2.k8s.aws -n $ns -o name 2>$null
+
+        if ([string]::IsNullOrWhiteSpace($svc) -and [string]::IsNullOrWhiteSpace($tgb)) {
+          Write-Host "LBC-managed resources are gone (NLB and target groups deprovisioned)."
           exit 0
         }
-        Write-Host "Attempt $i/$maxAttempts - service still terminating, waiting 10s..."
+
+        Write-Host "Attempt $i/$maxAttempts - still draining (svc='$svc' tgb='$tgb'), waiting 10s..."
         Start-Sleep -Seconds 10
       }
 
-      Write-Host "WARNING: timed out waiting for the NGINX Service to delete; continuing."
+      Write-Host "WARNING: timed out waiting for LBC resources to drain; continuing."
       exit 0
     EOT
   }

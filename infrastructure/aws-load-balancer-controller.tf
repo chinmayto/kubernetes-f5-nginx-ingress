@@ -92,10 +92,10 @@ resource "helm_release" "aws_lb_controller" {
     module.aws_lb_controller_pod_identity,
   ]
 
-  # On destroy, null_resource.drain_nginx_service (defined in nginx-ingress.tf)
-  # deletes the NGINX LoadBalancer Service and waits for its AWS LBC finalizer
-  # to clear BEFORE this controller is uninstalled. Referencing it here via
-  # lifecycle replace_triggered_by is not needed; the dependency edge is created
-  # by drain_nginx_service.depends_on = [helm_release.aws_lb_controller], which
-  # forces this release to be destroyed only after the drain completes.
+  # On destroy, null_resource.drain_lbc_resources (defined in nginx-ingress.tf)
+  # deletes the NGINX LoadBalancer Service and TargetGroupBindings and waits for
+  # their AWS LBC finalizers to clear BEFORE this controller is uninstalled. The
+  # dependency edge is created by drain_lbc_resources.depends_on =
+  # [helm_release.aws_lb_controller], which forces this release to be destroyed
+  # only after the drain completes (while the LBC is still running).
 }
